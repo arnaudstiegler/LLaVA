@@ -20,8 +20,8 @@ from dataclasses import dataclass, field
 import json
 import logging
 import pathlib
-from typing import Dict, Optional, Sequence
-
+from typing import Any, Dict, Optional, Sequence, List
+import random
 import torch
 
 import transformers
@@ -351,8 +351,26 @@ def preprocess_mpt(
     )
 
 
+def preprocess_vqa(sources, tokenizer):
+    question = sources[0]['question']
+    answer = random.choice(sources[0]['answers'])
+
+    question = tokenizer(question, return_tensors='pt', padding=False).input_ids
+    answer = tokenizer(answer, return_tensors='pt', padding=False).input_ids
+    answer_token = tokenizer('<answer>', return_tensors='pt', padding=False).input_ids
+
+    input_ids = torch.cat([question, answer_token, answer], dim=-1)
+    labels = torch.cat([torch.tensor([-100] * (question.shape[-1] + 1)), answer.squeeze(0)],
+                       dim=-1).unsqueeze(0)
+
+    return dict(
+        input_ids=input_ids,
+        labels=labels,
+    )
+
+
 def preprocess(
-    sources: Sequence[str],
+    sources: List[Dict[str, Any]],
     tokenizer: transformers.PreTrainedTokenizer,
 ) -> Dict:
     """
@@ -365,7 +383,7 @@ def preprocess(
     if conversation_lib.default_conversation.version == "v1":
         return preprocess_v1(sources, tokenizer)
     if conversation_lib.default_conversation.version == "mpt":
-        return preprocess_mpt(sources, tokenizer)
+        return preprocess_vqa(sources, tokenizer)
     # add end signal and concatenate together
     conversations = []
     for source in sources:
@@ -460,9 +478,9 @@ class LazySupervisedDataset(Dataset):
             else:
                 image = processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
             cur_token_len = (image.shape[1]//14) * (image.shape[2]//14)   # FIXME: 14 is hardcoded patch size
-            sources = preprocess_multimodal(
-                copy.deepcopy([e["conversations"] for e in sources]),
-                self.multimodal_cfg, cur_token_len)
+            # sources = preprocess_multimodal(
+            #     copy.deepcopy([e["conversations"] for e in sources]),
+            #     self.multimodal_cfg, cur_token_len)
         else:
             sources = copy.deepcopy([e["conversations"] for e in sources])
         data_dict = preprocess(
